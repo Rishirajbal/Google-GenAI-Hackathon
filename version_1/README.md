@@ -70,13 +70,5 @@ ADK Web will discover `proto_1.root_agent` and expose a chat UI. The Chat pane s
 - `__init__.py`: makes a directory a Python package and re-exports agents. At the app root (`proto_1/__init__.py`), it exposes `root_agent = final_agent`, which ADK uses as the module entry point.
 - `.env`: stores environment variables for configuration. ADK loads it to obtain credentials, most importantly `GOOGLE_API_KEY` when using the Google AI API. Keep it out of version control.
 
-## Quick smoke test
-
-```powershell
-./venv/Scripts/Activate.ps1
-python -c "import proto_1; from proto_1 import root_agent; print(root_agent.name)"
-```
-
-If this prints `final_agent`, the module export is wired correctly.
 
 
