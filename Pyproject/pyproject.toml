@@ -21,11 +21,10 @@ cloudpickle = "^3.0.0"
 
 [tool.poetry.scripts]
 deploy-local = "deployment.local:main"
-deploy-remote = "deployment.remote:main"
-cleanup = "deployment.cleanup:cleanup_deployment"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
 
  
