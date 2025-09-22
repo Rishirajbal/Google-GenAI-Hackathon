@@ -1,14 +1,17 @@
-# app.py - Streamlit Deployable Version
+# app.py - Fixed for Streamlit Cloud Deployment
 import streamlit as st
 import os
+import json
+import tempfile
 import vertexai
 from vertexai import agent_engines
 import uuid
 from datetime import datetime
+from google.oauth2 import service_account
 
 # === Load credentials from Streamlit Secrets ===
 PROJECT_ID = st.secrets["PROJECT_ID"]
-LOCATION = st.secrets["LOCATION"]
+LOCATION = st.secrets["LOCATION"] 
 STAGING_BUCKET = st.secrets["STAGING_BUCKET"]
 RESOURCE_ID = st.secrets["RESOURCE_ID"]
 
@@ -80,26 +83,45 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# === Agent Initialization ===
+# === Agent Initialization with Service Account ===
 @st.cache_resource
 def initialize_agent():
-    """Initialize connection to Vertex AI agent."""
+    """Initialize connection to Vertex AI agent with proper authentication."""
     try:
-        os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "TRUE"
-        os.environ["GOOGLE_CLOUD_PROJECT"] = PROJECT_ID
-        os.environ["GOOGLE_CLOUD_LOCATION"] = LOCATION
-        os.environ["GOOGLE_CLOUD_STAGING_BUCKET"] = STAGING_BUCKET
+        # Method 1: Try using service account key from secrets
+        if "GOOGLE_SERVICE_ACCOUNT_KEY" in st.secrets:
+            # Create credentials from service account key
+            service_account_info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_KEY"])
+            credentials = service_account.Credentials.from_service_account_info(service_account_info)
+            
+            # Initialize Vertex AI with explicit credentials
+            vertexai.init(
+                project=PROJECT_ID,
+                location=LOCATION,
+                staging_bucket=STAGING_BUCKET,
+                credentials=credentials
+            )
+            
+        else:
+            # Method 2: Fallback to environment variables (for local development)
+            os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "TRUE"
+            os.environ["GOOGLE_CLOUD_PROJECT"] = PROJECT_ID
+            os.environ["GOOGLE_CLOUD_LOCATION"] = LOCATION
+            os.environ["GOOGLE_CLOUD_STAGING_BUCKET"] = STAGING_BUCKET
+            
+            # Initialize Vertex AI
+            vertexai.init(
+                project=PROJECT_ID,
+                location=LOCATION,
+                staging_bucket=STAGING_BUCKET,
+            )
 
-        vertexai.init(
-            project=PROJECT_ID,
-            location=LOCATION,
-            staging_bucket=STAGING_BUCKET,
-        )
-
+        # Get the deployed agent
         remote_app = agent_engines.get(RESOURCE_ID)
-        return remote_app, True, "✅ Connected to your mental health support bot!"
+        return remote_app, True, "Connected to your mental health support bot!"
+        
     except Exception as e:
-        return None, False, f"❌ Connection failed: {str(e)}"
+        return None, False, f"Connection failed: {str(e)}"
 
 # === Agent Response Handler ===
 def get_agent_response(remote_app, user_id, session_id, message, debug=False):
@@ -181,9 +203,9 @@ def main():
         st.session_state.debug_mode = st.checkbox("Debug Mode", value=st.session_state.debug_mode)
 
         if st.session_state.agent_connected:
-            st.success("Connected ✅")
+            st.success("Connected")
         else:
-            st.error("Not connected ❌")
+            st.error("Not connected")
 
         if st.button("Connect to Saarthi", type="primary"):
             with st.spinner("Connecting..."):
@@ -213,6 +235,7 @@ def main():
                     st.session_state.session_id = session_id
                     st.session_state.messages = []
                     st.success("New session started!")
+                    st.rerun()
                 else:
                     st.error("Failed to start session")
             else:
@@ -221,43 +244,75 @@ def main():
         if st.button("Clear Chat"):
             st.session_state.messages = []
             st.success("Chat cleared!")
+            st.rerun()
+
+    # Auto-initialize on first load
+    if not st.session_state.agent_connected and st.session_state.remote_app is None:
+        with st.spinner("Initializing Saarthi..."):
+            remote_app, success, message = initialize_agent()
+            if success:
+                st.session_state.remote_app = remote_app
+                st.session_state.agent_connected = True
+                
+                # Auto-create session
+                session_id, sess_success = create_session(remote_app, st.session_state.user_id)
+                if sess_success:
+                    st.session_state.session_id = session_id
+                    # Add welcome message
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": "Hello! I'm Saarthi, your AI mental health support companion. I'm here to provide a safe, non-judgmental space for you to express your thoughts and feelings. How are you doing today?",
+                        "timestamp": datetime.now().strftime("%H:%M:%S")
+                    })
+                st.rerun()
+            else:
+                st.error(f"Failed to initialize: {message}")
 
     # Main Chat
-    st.subheader("Your Safe Space")
+    if st.session_state.messages:
+        st.subheader("Your Safe Space")
 
-    for message in st.session_state.messages:
-        role_class = "user-message" if message["role"] == "user" else "bot-message"
-        role_label = "You" if message["role"] == "user" else "Saarthi"
-        st.markdown(f"""
-        <div class="{role_class}">
-            {message["content"]}
-            <div class="message-time">{role_label} • {message["timestamp"]}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        for message in st.session_state.messages:
+            role_class = "user-message" if message["role"] == "user" else "bot-message"
+            role_label = "You" if message["role"] == "user" else "Saarthi"
+            st.markdown(f"""
+            <div class="{role_class}">
+                {message["content"]}
+                <div class="message-time">{role_label} • {message["timestamp"]}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info("Welcome! Your conversation will appear here once you start chatting.")
 
     st.divider()
     st.markdown("### Share what's on your mind...")
 
     user_message = st.text_area(
         label="Your message",
-        placeholder="Express your thoughts and feelings here...",
+        placeholder="Express your thoughts and feelings here... I'm listening with empathy and without judgment.",
         height=120,
         key="user_input",
         label_visibility="collapsed"
     )
 
-    if st.button("Share", type="primary", use_container_width=True) and user_message.strip():
+    col1, col2, col3 = st.columns([2, 1, 2])
+    with col2:
+        send_button = st.button("Share", type="primary", use_container_width=True)
+
+    if send_button and user_message.strip():
         if not st.session_state.agent_connected:
             st.error("Please connect to Saarthi first!")
         elif not st.session_state.session_id:
             st.error("No active session. Please start a new session.")
         else:
+            # Add user message
             st.session_state.messages.append({
                 "role": "user",
                 "content": user_message,
                 "timestamp": datetime.now().strftime("%H:%M:%S")
             })
 
+            # Get agent response
             with st.spinner("Saarthi is responding..."):
                 response = get_agent_response(
                     st.session_state.remote_app,
@@ -267,21 +322,24 @@ def main():
                     debug=st.session_state.debug_mode
                 )
 
+            # Add agent response
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": response,
                 "timestamp": datetime.now().strftime("%H:%M:%S")
             })
 
-            st.experimental_rerun()
+            st.rerun()
 
+    # Debug info
     if st.session_state.debug_mode:
         st.subheader("Debug Info")
         st.json({
             "connected": st.session_state.agent_connected,
             "session_id": st.session_state.session_id,
             "user_id": st.session_state.user_id,
-            "messages_count": len(st.session_state.messages)
+            "messages_count": len(st.session_state.messages),
+            "has_service_account": "GOOGLE_SERVICE_ACCOUNT_KEY" in st.secrets
         })
 
 if __name__ == "__main__":
