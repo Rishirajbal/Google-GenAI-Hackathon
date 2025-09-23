@@ -1,4 +1,3 @@
-# app.py - Fixed for Streamlit Cloud Deployment
 import streamlit as st
 import os
 import json
@@ -344,3 +343,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
